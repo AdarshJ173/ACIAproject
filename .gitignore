@@ -1,0 +1,44 @@
+# Virtual environment
+.venv/
+venv/
+env/
+
+# Python cache
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+
+# Local env / secrets
+.env
+.env.*
+!.env.example
+
+# Generated DB (recreate with: python main.py --setup)
+data/acia.db
+data/*.db-journal
+data/*.db-wal
+data/*.db-shm
+
+# Trained model artifacts (recreate with setup)
+models/artifacts/*.pkl
+models/artifacts/*.joblib
+
+# Test / coverage / tooling
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+dist/
+build/
+*.egg-info/
+
+# OS / IDE
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+*.swo
