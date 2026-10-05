@@ -30,6 +30,14 @@ python main.py --llm
 # Quiet output
 python main.py --llm --quiet
 ```
+## Terminal UI (interactive dashboard in your terminal)
+
+```bash
+python main.py --tui
+```
+
+> **Keys**: `q` Quit · `r` Run cycle · `e` Execute queue · `f` Feedback · `SPACE` Refresh
+
 
 ## Individual stages
 

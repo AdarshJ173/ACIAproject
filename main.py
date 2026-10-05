@@ -126,12 +126,13 @@ Examples:
   python main.py --setup          # data generation + model training only
   python main.py --cycle --llm    # one agent cycle with OpenRouter LLM
   python main.py --api            # start REST API on port 8000
-  python main.py --api --port 9000
+  python main.py --tui            # interactive curses terminal UI
         """,
     )
     p.add_argument("--setup",      action="store_true", help="Generate data and train models only")
     p.add_argument("--cycle",      action="store_true", help="Run one agent decision + execution cycle")
     p.add_argument("--api",        action="store_true", help="Start FastAPI REST server")
+    p.add_argument("--tui",        action="store_true", help="Start interactive curses Terminal UI")
     p.add_argument("--llm",        action="store_true", help="Enable OpenRouter LLM planning (free models)")
     p.add_argument("--llm-budget", type=int, default=20, metavar="N", help="Max LLM calls per cycle (default: 20)")
     p.add_argument("--host",       default="0.0.0.0",   help="API host (default: 0.0.0.0)")
@@ -153,6 +154,9 @@ def main() -> None:
 
     if args.api:
         run_api(host=args.host, port=args.port)
+    elif args.tui:
+        from dashboard.tui import launch_tui
+        launch_tui()
     elif args.setup:
         print(BANNER)
         run_setup(verbose=verbose)
