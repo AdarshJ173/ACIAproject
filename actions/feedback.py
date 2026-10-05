@@ -6,7 +6,6 @@ and a summary of what worked.
 """
 
 from __future__ import annotations
-import sqlite3
 import pandas as pd
 from pathlib import Path
 from datetime import datetime, timedelta
@@ -14,7 +13,7 @@ from datetime import datetime, timedelta
 import sys
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from data.db import DB_PATH
+from data.db import connect
 
 # Outcome → health score delta mapping
 HEALTH_DELTAS: dict[str, float] = {
@@ -50,12 +49,18 @@ def apply_feedback(lookback_hours: int = 24, verbose: bool = True) -> dict:
     1. Adjust health scores based on outcomes
     2. Flag customers for model re-scoring
     3. Return feedback summary
+
+    Each execution is folded into health scores exactly once — outcomes already
+    marked with feedback_applied_at are skipped, so calling this repeatedly
+    (cron, API endpoint) never double-counts a delta.
     """
-    conn    = sqlite3.connect(DB_PATH)
+    conn    = connect()
     cutoff  = (datetime.now() - timedelta(hours=lookback_hours)).strftime("%Y-%m-%d %H:%M:%S")
 
     executed = pd.read_sql(
-        "SELECT * FROM agent_actions WHERE status='executed' AND executed_at >= ?",
+        "SELECT * FROM agent_actions "
+        "WHERE status='executed' AND executed_at >= ? "
+        "  AND (feedback_applied_at IS NULL OR feedback_applied_at = '')",
         conn, params=(cutoff,)
     )
 
@@ -86,6 +91,13 @@ def apply_feedback(lookback_hours: int = 24, verbose: bool = True) -> dict:
                WHERE customer_id = ?""",
             (delta, cid)
         )
+
+    # Mark this batch as processed so it is never applied twice
+    now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    conn.executemany(
+        "UPDATE agent_actions SET feedback_applied_at=? WHERE action_id=?",
+        [(now_str, aid) for aid in executed["action_id"].tolist()],
+    )
 
     conn.commit()
 
