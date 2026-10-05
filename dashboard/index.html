@@ -1,0 +1,235 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>ACIA — Live Dashboard</title>
+<style>
+  :root {
+    --bg: #0B0F19; --panel: rgba(255,255,255,.03); --border: rgba(255,255,255,.08);
+    --text: #F9FAFB; --muted: #9CA3AF; --dim: #6B7280;
+    --blue: #60A5FA; --green: #6EE7B7; --red: #F87171; --amber: #FCD34D; --purple: #A78BFA;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text);
+         font-family: 'Inter', system-ui, -apple-system, sans-serif; }
+  header { display: flex; justify-content: space-between; align-items: center;
+           padding: 18px 28px; background: rgba(0,0,0,.3);
+           border-bottom: 1px solid var(--border); }
+  header h1 { font-size: 18px; margin: 0; letter-spacing: -.02em; }
+  header h1 span { color: var(--blue); }
+  header .sub { font-size: 11px; color: var(--dim); margin-top: 2px; }
+  .live { display: flex; gap: 8px; align-items: center; font-size: 12px;
+          color: var(--green); font-weight: 600; }
+  .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--green);
+         box-shadow: 0 0 8px var(--green); }
+  main { padding: 24px 28px; display: flex; flex-direction: column; gap: 22px; }
+  .kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 14px; }
+  .card { background: var(--panel); border: 1px solid var(--border);
+          border-radius: 12px; padding: 18px 20px; }
+  .kpi .label { font-size: 11px; color: var(--dim); letter-spacing: .08em;
+                text-transform: uppercase; }
+  .kpi .value { font-size: 28px; font-weight: 700; line-height: 1.2; margin-top: 6px; }
+  .kpi .sub { font-size: 12px; color: var(--muted); margin-top: 4px; }
+  .cols { display: grid; grid-template-columns: 1.3fr 1fr; gap: 18px; }
+  @media (max-width: 900px) { .cols { grid-template-columns: 1fr; } }
+  .title { font-size: 11px; font-weight: 700; letter-spacing: .1em;
+           text-transform: uppercase; color: var(--dim); margin-bottom: 14px; }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th { text-align: left; padding: 8px 10px; color: var(--dim); font-weight: 600;
+       font-size: 11px; text-transform: uppercase; letter-spacing: .06em;
+       border-bottom: 1px solid var(--border); }
+  td { padding: 9px 10px; border-bottom: 1px solid rgba(255,255,255,.05); }
+  .badge { display: inline-block; border-radius: 4px; font-size: 10px; font-weight: 700;
+           padding: 2px 7px; letter-spacing: .06em; }
+  .bar { height: 8px; border-radius: 4px; background: rgba(255,255,255,.08); overflow: hidden; }
+  .bar > div { height: 100%; border-radius: 4px; }
+  .segrow { display: flex; align-items: center; gap: 10px; padding: 7px 0; font-size: 12px; }
+  .segrow .name { width: 80px; color: #D1D5DB; }
+  .segrow .bar { flex: 1; }
+  .segrow .n { width: 44px; text-align: right; color: var(--muted); }
+  .err { color: var(--red); font-size: 13px; }
+  button { background: rgba(96,165,250,.12); color: var(--blue); border: 1px solid rgba(96,165,250,.35);
+           border-radius: 8px; padding: 7px 14px; font-size: 12px; font-weight: 600; cursor: pointer; }
+</style>
+</head>
+<body>
+<header>
+  <div>
+    <h1><span>ACIA</span> · Autonomous CRM Intelligence Agent</h1>
+    <div class="sub">Live data from this API — <span id="stamp">loading…</span></div>
+  </div>
+  <div class="live"><span class="dot"></span><span id="status">Agent Active</span></div>
+</header>
+
+<main>
+  <div class="kpis" id="kpis"></div>
+
+  <div class="cols">
+    <div class="card">
+      <div class="title">Highest Churn Risk — Active Customers</div>
+      <table>
+        <thead><tr><th>Customer</th><th>Plan</th><th>MRR</th><th>Churn</th><th>Segment</th></tr></thead>
+        <tbody id="risk"><tr><td colspan="5" class="sub">Loading…</td></tr></tbody>
+      </table>
+    </div>
+
+    <div class="card">
+      <div class="title">Customer Segments</div>
+      <div id="segments"></div>
+    </div>
+  </div>
+
+  <div class="cols">
+    <div class="card">
+      <div class="title">Latest Action Outcomes</div>
+      <table>
+        <thead><tr><th>Customer</th><th>Action</th><th>P</th><th>Outcome</th></tr></thead>
+        <tbody id="outcomes"><tr><td colspan="4" class="sub">Loading…</td></tr></tbody>
+      </table>
+    </div>
+
+    <div class="card">
+      <div class="title">Pending Action Queue</div>
+      <table>
+        <thead><tr><th>Customer</th><th>Action</th><th>P</th><th>Urgency</th></tr></thead>
+        <tbody id="queue"><tr><td colspan="4" class="sub">Loading…</td></tr></tbody>
+      </table>
+      <div style="margin-top:14px">
+        <button id="run">Run agent cycle</button>
+        <button id="exec">Execute queue</button>
+      </div>
+      <div id="actionResult" class="sub" style="margin-top:8px"></div>
+    </div>
+  </div>
+</main>
+
+<script>
+const SEG_COLOR = { Champion: "#6EE7B7", Loyal: "#60A5FA", "At-Risk": "#FCD34D",
+                    Prospect: "#A78BFA", Lost: "#F87171" };
+const P_COLOR = { 5: "#EF4444", 4: "#F97316", 3: "#EAB308", 2: "#22C55E", 1: "#6B7280" };
+const money = v => v >= 1e6 ? `$${(v/1e6).toFixed(2)}M` : v >= 1e3 ? `$${(v/1e3).toFixed(1)}K` : `$${(+v).toFixed(0)}`;
+const esc = s => String(s ?? "").replace(/[&<>"']/g, c =>
+  ({ "&":"&amp;", "<":"&lt;", ">":"&gt;", '"':"&quot;", "'":"&#39;" }[c]));
+const badge = (label, color) =>
+  `<span class="badge" style="background:${color}22;color:${color};border:1px solid ${color}44">${esc(label)}</span>`;
+
+async function getJSON(path) {
+  const r = await fetch(path);
+  if (!r.ok) throw new Error(`${path} → HTTP ${r.status}`);
+  return r.json();
+}
+
+function renderKpis(d) {
+  const items = [
+    ["Active Customers", d.active_customers.toLocaleString(), `${d.churned_customers} churned (${d.churn_rate}%)`, "var(--blue)"],
+    ["Monthly MRR", money(d.total_mrr), "Active accounts only", "var(--green)"],
+    ["Estimated LTV", money(d.total_ltv), "Across all customers", "var(--purple)"],
+    ["High-Risk Churn", d.high_risk_count, "Score ≥ 60% — urgent", "var(--red)"],
+    ["Hot Conversions", d.hot_conversions, "Score ≥ 70% — upsell now", "var(--amber)"],
+    ["Actions", `${d.actions_pending} pending`, `${d.actions_executed} executed`, "var(--green)"],
+  ];
+  document.getElementById("kpis").innerHTML = items.map(([label, value, sub, color]) => `
+    <div class="card kpi">
+      <div class="label">${esc(label)}</div>
+      <div class="value" style="color:${color}">${esc(value)}</div>
+      <div class="sub">${esc(sub)}</div>
+    </div>`).join("");
+}
+
+function renderRisk(rows) {
+  document.getElementById("risk").innerHTML = rows.map(r => {
+    const pct = Math.round(r.churn_score * 100);
+    const color = r.churn_score > .6 ? "var(--red)" : r.churn_score > .3 ? "var(--amber)" : "var(--green)";
+    return `<tr>
+      <td style="font-weight:600">${esc(r.customer_id)}</td>
+      <td>${badge(r.plan, "#60A5FA")}</td>
+      <td style="color:var(--green)">${money(r.mrr)}</td>
+      <td style="min-width:130px">
+        <div style="display:flex;align-items:center;gap:8px">
+          <div class="bar" style="flex:1"><div style="width:${pct}%;background:${color}"></div></div>
+          <b style="color:${color};font-size:12px">${pct}%</b>
+        </div>
+      </td>
+      <td style="color:var(--muted)">${esc(r.segment)}</td>
+    </tr>`;
+  }).join("") || `<tr><td colspan="5" class="sub">No predictions yet — run <code>python main.py --setup</code></td></tr>`;
+}
+
+function renderSegments(rows) {
+  const total = rows.reduce((a, r) => a + r.customer_count, 0) || 1;
+  document.getElementById("segments").innerHTML = rows.map(r => {
+    const color = SEG_COLOR[r.segment] || "#60A5FA";
+    const pct = Math.round(r.customer_count / total * 100);
+    return `<div class="segrow">
+      <span class="name">${esc(r.segment)}</span>
+      <div class="bar"><div style="width:${pct}%;background:${color}"></div></div>
+      <span class="n">${r.customer_count}</span>
+    </div>
+    <div class="sub" style="font-size:11px;color:var(--dim);margin:-4px 0 6px 90px">
+      avg churn ${Math.round(r.avg_churn_score*100)}% · LTV ${money(r.total_ltv)}
+    </div>`;
+  }).join("") || `<div class="sub">No segments yet.</div>`;
+}
+
+function renderOutcomes(rows) {
+  document.getElementById("outcomes").innerHTML = rows.map(a => `<tr>
+    <td style="font-weight:600">${esc(a.customer_id)}</td>
+    <td style="color:var(--muted)">${esc(String(a.action_type).replace(/_/g, " "))}</td>
+    <td>${badge("P" + a.priority, P_COLOR[a.priority] || "#6B7280")}</td>
+    <td>${esc(a.outcome || "—")}</td>
+  </tr>`).join("") || `<tr><td colspan="4" class="sub">No executed actions yet.</td></tr>`;
+}
+
+function renderQueue(rows) {
+  document.getElementById("queue").innerHTML = rows.map(a => `<tr>
+    <td style="font-weight:600">${esc(a.customer_id)}</td>
+    <td style="color:var(--muted)">${esc(String(a.action_type).replace(/_/g, " "))}</td>
+    <td>${badge("P" + a.priority, P_COLOR[a.priority] || "#6B7280")}</td>
+    <td>${a.urgency_score == null ? "—" : (+a.urgency_score).toFixed(1)}</td>
+  </tr>`).join("") || `<tr><td colspan="4" class="sub">Queue is empty.</td></tr>`;
+}
+
+async function refresh() {
+  try {
+    const [kpi, churn, segs, executed, queue] = await Promise.all([
+      getJSON("/dashboard"),
+      getJSON("/predictions/churn?limit=6"),
+      getJSON("/predictions/segments"),
+      getJSON("/actions/queue?status=executed&limit=6"),
+      getJSON("/actions/queue?status=pending&limit=8"),
+    ]);
+    renderKpis(kpi);
+    renderRisk(churn.predictions);
+    renderSegments(segs.segments);
+    renderOutcomes(executed.actions);
+    renderQueue(queue.actions);
+    document.getElementById("stamp").textContent = "refreshed " + new Date().toLocaleTimeString();
+    document.getElementById("status").textContent = "Agent Active";
+  } catch (e) {
+    document.getElementById("status").textContent = "API unreachable";
+    document.getElementById("stamp").innerHTML = `<span class="err">${esc(e.message)}</span>`;
+  }
+}
+
+async function post(path, body) {
+  const el = document.getElementById("actionResult");
+  el.textContent = "working…";
+  try {
+    const r = await fetch(path, { method: "POST", headers: { "Content-Type": "application/json" },
+                                  body: body ? JSON.stringify(body) : undefined });
+    const data = await r.json();
+    el.textContent = r.ok ? JSON.stringify(data) : `error ${r.status}: ${JSON.stringify(data)}`;
+  } catch (e) {
+    el.textContent = e.message;
+  }
+  refresh();
+}
+
+document.getElementById("run").onclick   = () => post("/agent/run?use_llm=false");
+document.getElementById("exec").onclick  = () => post("/actions/execute", { limit: 50 });
+refresh();
+setInterval(refresh, 15000);
+</script>
+</body>
+</html>

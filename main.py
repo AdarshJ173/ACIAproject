@@ -158,7 +158,8 @@ def main() -> None:
         run_setup(verbose=verbose)
         print("\n✅  Setup complete. Run `python main.py --cycle` to trigger an agent cycle.\n")
     elif args.cycle:
-        if not (ROOT / "data" / "acia.db").exists():
+        from data.db import DB_PATH
+        if not DB_PATH.exists():
             print("⚠️  Database not found. Running setup first...")
             run_setup(verbose=False)
         print(BANNER)

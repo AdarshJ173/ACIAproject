@@ -3,20 +3,21 @@ ACIA — REST API (FastAPI)
 Exposes the full CRM intelligence system as a REST service.
 
 Install:  pip install fastapi uvicorn
-Run:      uvicorn api.main:app --reload --port 8000
+Run:      python main.py --api   (or: uvicorn api:app --reload --port 8000)
 Docs:     http://localhost:8000/docs
+Dashboard: http://localhost:8000/ui
 """
 
 from __future__ import annotations
 import sqlite3
-import os
 from pathlib import Path
 from datetime import datetime
 from typing import Optional
 
 # FastAPI imports — install with: pip install fastapi uvicorn
 try:
-    from fastapi import FastAPI, HTTPException, Query, BackgroundTasks
+    from fastapi import FastAPI, HTTPException, Query
+    from fastapi.responses import HTMLResponse
     from fastapi.middleware.cors import CORSMiddleware
     from pydantic import BaseModel
     FASTAPI_AVAILABLE = True
@@ -28,7 +29,9 @@ import sys
 ROOT = Path(__file__).resolve().parent
 sys.path.insert(0, str(ROOT))
 
-from data.db import DB_PATH
+from data.db import connect
+
+DASHBOARD_HTML = ROOT / "dashboard" / "index.html"
 
 
 # ── Pydantic schemas ──────────────────────────────────────────────────────────
@@ -100,9 +103,7 @@ class TrainRequest(BaseModel):
 # ── DB helpers ────────────────────────────────────────────────────────────────
 
 def get_db() -> sqlite3.Connection:
-    conn = sqlite3.connect(DB_PATH)
-    conn.row_factory = sqlite3.Row
-    return conn
+    return connect()
 
 
 def row_to_dict(row) -> dict:
@@ -155,6 +156,13 @@ def create_app() -> "FastAPI":
             raise HTTPException(status_code=503, detail=f"DB error: {e}")
 
     # ── Dashboard ─────────────────────────────────────────────────────────────
+
+    @app.get("/ui", response_class=HTMLResponse, tags=["Dashboard"])
+    def dashboard_ui():
+        """Live dashboard — single HTML page that renders this API's own data."""
+        if not DASHBOARD_HTML.exists():
+            raise HTTPException(status_code=404, detail="dashboard/index.html not found")
+        return HTMLResponse(DASHBOARD_HTML.read_text(encoding="utf-8"))
 
     @app.get("/dashboard", response_model=DashboardSummary, tags=["Dashboard"])
     def get_dashboard():
@@ -348,7 +356,7 @@ def create_app() -> "FastAPI":
                 params.append(priority)
             rows = conn.execute(
                 f"SELECT * FROM agent_actions WHERE {' AND '.join(where)} "
-                f"ORDER BY priority DESC, created_at ASC LIMIT ?",
+                f"ORDER BY urgency_score DESC, priority DESC, created_at ASC LIMIT ?",
                 params + [limit]
             ).fetchall()
             return {"actions": [row_to_dict(r) for r in rows], "count": len(rows), "status": status}
@@ -368,7 +376,7 @@ def create_app() -> "FastAPI":
             conn.close()
 
     @app.post("/actions/execute", tags=["Actions"])
-    def execute_actions(req: ExecuteRequest, background_tasks: BackgroundTasks):
+    def execute_actions(req: ExecuteRequest):
         """
         Execute pending actions from the queue.
         Returns execution results immediately (synchronous).

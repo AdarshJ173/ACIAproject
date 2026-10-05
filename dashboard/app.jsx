@@ -267,7 +267,7 @@ function PipelineTab() {
   const steps = [
     { n: "1", label: "Data Ingestion",       desc: "500 customers · 5 tables · 28 features", status: "done",    icon: "🗄️" },
     { n: "2", label: "ML Models",             desc: "Churn · Conversion · Segmentation",      status: "done",    icon: "🧠" },
-    { n: "3", label: "Rule Engine",           desc: "8 rules · 281 candidates fired",          status: "done",    icon: "⚙️" },
+    { n: "3", label: "Rule Engine",           desc: "9 rules · 372 candidates fired",          status: "done",    icon: "⚙️" },
     { n: "4", label: "LLM Planner",           desc: "OpenRouter free models · conflict resolution", status: "done", icon: "🤖" },
     { n: "5", label: "Action Scheduler",      desc: "Priority queue · cooldown logic",         status: "done",    icon: "📋" },
     { n: "6", label: "Executor + Templates",  desc: "243 actions · 8 outcome types",           status: "done",    icon: "⚡" },
@@ -276,8 +276,8 @@ function PipelineTab() {
   ];
 
   const modelStats = [
-    { name: "Churn Predictor",      algo: "Random Forest",    auc: "0.9985", features: 28 },
-    { name: "Conversion Scorer",    algo: "Logistic Reg.",    auc: "1.0000", features: 27 },
+    { name: "Churn Predictor",      algo: "Random Forest",    auc: "0.9993", features: 28 },
+    { name: "Conversion Scorer",    algo: "Gradient Boost",   auc: "0.7523", features: 24 },
     { name: "Segment Classifier",   algo: "KMeans (k=5)",     auc: "Sil. 0.23", features: 6 },
   ];
 
