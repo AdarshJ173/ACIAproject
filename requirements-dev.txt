@@ -1,2 +1,3 @@
 # ACIA — development / test dependencies
 pytest>=8.0.0
+httpx>=0.27.0                # transport for FastAPI's TestClient
