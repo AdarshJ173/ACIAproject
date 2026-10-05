@@ -4,7 +4,6 @@ Trains all models, runs inference on all customers,
 and writes predictions to the ml_predictions table.
 """
 
-import sqlite3
 import uuid
 import pandas as pd
 from pathlib import Path
@@ -13,7 +12,7 @@ from datetime import datetime
 import sys
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from data.db import DB_PATH
+from data.db import connect
 from data.features import build_customer_features
 from models.churn import train_churn_model, predict_churn
 from models.conversion import train_conversion_model, predict_conversion
@@ -76,7 +75,7 @@ def run_inference_and_store(verbose: bool = True) -> pd.DataFrame:
             now,
         ))
 
-    conn = sqlite3.connect(DB_PATH)
+    conn = connect()
     conn.execute("DELETE FROM ml_predictions")   # fresh run
     conn.executemany(
         "INSERT INTO ml_predictions VALUES (?,?,?,?,?,?,?)",
@@ -102,7 +101,7 @@ def run_inference_and_store(verbose: bool = True) -> pd.DataFrame:
 
 def get_predictions() -> pd.DataFrame:
     """Load latest predictions from DB."""
-    conn = sqlite3.connect(DB_PATH)
+    conn = connect()
     df   = pd.read_sql("SELECT * FROM ml_predictions", conn)
     conn.close()
     return df

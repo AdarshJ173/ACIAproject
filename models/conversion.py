@@ -35,6 +35,15 @@ def _build_conversion_label(df: pd.DataFrame) -> pd.Series:
     return (df["plan_rank"] >= 2).astype(int)
 
 
+# The label is plan-derived, and plan determines price: mrr / spend / AOV
+# separate Pro from Free so perfectly that the model memorises the label
+# (test AUC 1.0) while scoring every actual prospect ≈ 0. That leaves
+# conversion_score useless as upgrade intent — CNV-001/002/003 never fire.
+# Behavioural, support and engagement features are kept: "looks like a Pro
+# user" is the upgrade-propensity signal we actually want.
+LEAKY_FEATURES = {"plan_rank", "mrr", "total_spend", "avg_order_value"}
+
+
 def train_conversion_model(verbose: bool = True) -> dict:
     df = build_customer_features()
 
@@ -43,8 +52,8 @@ def train_conversion_model(verbose: bool = True) -> dict:
     y = _build_conversion_label(df_target)
 
     feat_cols = get_all_feature_cols()
-    # Drop plan_rank to avoid data leakage
-    feat_cols_clean = [c for c in feat_cols if c != "plan_rank"]
+    # Drop plan/money features that leak the label (see LEAKY_FEATURES)
+    feat_cols_clean = [c for c in feat_cols if c not in LEAKY_FEATURES]
     X = df_target[feat_cols_clean].values
 
     if y.sum() < 10:
