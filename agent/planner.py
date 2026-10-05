@@ -26,6 +26,24 @@ from agent.rules import ActionCandidate
 OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
 DEFAULT_MODEL = "openrouter/free"
 
+# ── Canonical action set ──────────────────────────────────────────────────────
+# Single source of truth: drives the prompt, response validation and downstream
+# template/executor dispatch. An LLM answer outside this set is discarded.
+ACTION_TYPES: dict[str, str] = {
+    "escalate_to_csm":          "assign to customer success manager",
+    "send_retention_email":     "personalised retention campaign",
+    "send_reengagement_email":  "re-activate dormant users",
+    "send_upgrade_offer":       "upsell to higher plan",
+    "enroll_nurture_sequence":  "drip campaign for prospects",
+    "proactive_support_call":   "schedule outbound call",
+    "send_loyalty_reward":      "reward high-value loyal customers",
+    "send_health_checkin":      "low-pressure check-in for at-risk",
+    "no_action":                "customer is healthy, no intervention needed",
+}
+NO_ACTION = "no_action"
+MAX_REASON_LEN = 400
+MAX_NOTES_LEN = 300
+
 
 # ── Planned Action (output of planner) ───────────────────────────────────────
 @dataclass
@@ -59,15 +77,9 @@ You must output a single JSON object with this exact structure:
 }
 
 Action types available:
-- escalate_to_csm          (assign to customer success manager)
-- send_retention_email     (personalised retention campaign)
-- send_reengagement_email  (re-activate dormant users)
-- send_upgrade_offer       (upsell to higher plan)
-- enroll_nurture_sequence  (drip campaign for prospects)
-- proactive_support_call   (schedule outbound call)
-- send_loyalty_reward      (reward high-value loyal customers)
-- send_health_checkin      (low-pressure check-in for at-risk)
-- no_action                (customer is healthy, no intervention needed)
+""" + "\n".join(
+    f"- {name:25s} ({desc})" for name, desc in ACTION_TYPES.items()
+) + """
 
 Rules:
 - If multiple actions conflict, choose the highest-impact one
@@ -179,6 +191,56 @@ def _passthrough_plan(candidates: list[ActionCandidate]) -> PlannedAction:
     )
 
 
+def _validate_llm_decision(resp: object, fallback: ActionCandidate) -> dict | None:
+    """
+    Normalise an LLM decision against the canonical action set.
+    Returns:
+      - {"action_type": "no_action"}  → healthy customer, skip entirely
+      - dict of validated fields      → use the LLM decision
+      - None                          → unusable response, caller falls back to rules
+    LLM output is untrusted: unknown action types, out-of-range priorities and
+    non-numeric confidences are clamped or rejected instead of reaching the DB.
+    """
+    if not isinstance(resp, dict):
+        return None
+
+    action_type = resp.get("action_type")
+    if not isinstance(action_type, str) or action_type.strip() not in ACTION_TYPES:
+        return None
+    action_type = action_type.strip()
+    if action_type == NO_ACTION:
+        return {"action_type": NO_ACTION}
+
+    reason = resp.get("reason")
+    if not isinstance(reason, str) or not reason.strip():
+        reason = fallback.reason
+
+    try:
+        priority = int(resp.get("priority"))
+    except (TypeError, ValueError):
+        priority = fallback.priority
+    if not 1 <= priority <= 5:
+        priority = fallback.priority
+
+    try:
+        confidence = float(resp.get("confidence"))
+    except (TypeError, ValueError):
+        confidence = 0.7
+    confidence = min(max(confidence, 0.0), 1.0)
+
+    notes = resp.get("notes")
+    if not isinstance(notes, str):
+        notes = ""
+
+    return {
+        "action_type": action_type,
+        "reason":      reason[:MAX_REASON_LEN],
+        "priority":    priority,
+        "confidence":  confidence,
+        "notes":       notes[:MAX_NOTES_LEN],
+    }
+
+
 def plan_actions(
     candidates: list[ActionCandidate],
     customer_lookup: dict,
@@ -225,28 +287,32 @@ def plan_actions(
             prompt   = _build_customer_prompt(cands, row)
             llm_resp = _call_llm(prompt)
             llm_calls += 1
+            best_rule = max(cands, key=lambda c: c.priority)
+            decision  = _validate_llm_decision(llm_resp, best_rule) if llm_resp else None
 
-            if llm_resp:
-                # Merge rule context with LLM decision
-                best_rule = max(cands, key=lambda c: c.priority)
-                plan = PlannedAction(
+            if decision is not None and decision["action_type"] == NO_ACTION:
+                continue   # LLM judged this customer healthy — no action queued
+
+            if decision is not None:
+                # Merge validated LLM decision with rule context
+                plans.append(PlannedAction(
                     customer_id=cust_id,
-                    action_type=llm_resp.get("action_type", best_rule.action_type),
-                    reason=llm_resp.get("reason", best_rule.reason),
-                    priority=int(llm_resp.get("priority", best_rule.priority)),
+                    action_type=decision["action_type"],
+                    reason=decision["reason"],
+                    priority=decision["priority"],
                     rule_id=best_rule.rule_id,
                     llm_enhanced=True,
-                    confidence=float(llm_resp.get("confidence", 0.8)),
+                    confidence=decision["confidence"],
                     metadata={
-                        "llm_notes": llm_resp.get("notes", ""),
-                        "candidates": len(cands),
+                        "llm_notes":   decision.get("notes", ""),
+                        "candidates":  len(cands),
                         "triggered_by": best_rule.triggered_by,
+                        "context":     best_rule.context,
                     },
-                )
-                plans.append(plan)
+                ))
                 continue
+            # Unusable LLM response → fall through to rule passthrough
 
-        # Passthrough (single rule, low LTV, or LLM budget exhausted)
         plans.append(_passthrough_plan(cands))
 
     if verbose:

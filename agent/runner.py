@@ -41,8 +41,8 @@ def run_agent_cycle(
     if verbose:
         print(f"\n[1/3] Rule engine evaluating {len(df)} customers...")
 
-    # Step 2: Run rule engine
-    candidates = evaluate(verbose=verbose)
+    # Step 2: Run rule engine (reuse the enriched frame — no second feature build)
+    candidates = evaluate(verbose=verbose, df=df)
 
     # Step 3: LLM planner resolves conflicts + enriches reasoning
     cust_lookup = df.set_index("customer_id").to_dict("index")

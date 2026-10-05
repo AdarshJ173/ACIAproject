@@ -5,7 +5,6 @@ ActionCandidate objects consumed by the LLM planner and scheduler.
 """
 
 from __future__ import annotations
-import sqlite3
 import pandas as pd
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -13,7 +12,7 @@ from datetime import datetime
 
 import sys
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from data.db import DB_PATH
+from data.db import connect
 from data.features import build_customer_features
 
 
@@ -106,7 +105,7 @@ def dormant_re_engagement(row):
         )
 
 
-@rule("CHN-004", priority=3)
+@rule("CHN-004", priority=4)
 def negative_support_sentiment(row):
     """Customer opened cancellation ticket or has very negative support sentiment."""
     if row["cancellation_risk"] >= 1 or (
@@ -267,7 +266,7 @@ def run_rules(df: pd.DataFrame) -> list[ActionCandidate]:
 def get_enriched_df() -> pd.DataFrame:
     """Merge feature matrix with ML predictions for rule evaluation."""
     feat_df = build_customer_features()
-    conn    = sqlite3.connect(DB_PATH)
+    conn    = connect()
     pred_df = pd.read_sql("SELECT * FROM ml_predictions", conn)
     conn.close()
 
@@ -277,14 +276,31 @@ def get_enriched_df() -> pd.DataFrame:
     )
     df["churn_score"]      = df["churn_score"].fillna(0.0)
     df["conversion_score"] = df["conversion_score"].fillna(0.0)
+    df["ltv_estimate"]     = df["ltv_estimate"].fillna(0.0)   # NaN breaks urgency scoring
     df["segment"]          = df["segment"].fillna("Unknown")
     return df
 
 
-def evaluate(verbose: bool = True) -> list[ActionCandidate]:
-    """Full rule evaluation pass over all customers."""
-    df         = get_enriched_df()
+def _priority_mismatches(candidates: list[ActionCandidate]) -> dict[str, tuple[int, int]]:
+    """registry priority vs the priority the rule actually emitted, per rule id."""
+    registry = {r["id"]: r["priority"] for r in RULES}
+    mismatches: dict[str, tuple[int, int]] = {}
+    for c in candidates:
+        expected = registry.get(c.rule_id)
+        if expected is not None and expected != c.priority:
+            mismatches[c.rule_id] = (expected, c.priority)
+    return mismatches
+
+
+def evaluate(verbose: bool = True, df: pd.DataFrame | None = None) -> list[ActionCandidate]:
+    """Full rule evaluation pass over all customers. Pass `df` to reuse an
+    already-built enriched frame (avoids rebuilding features every call)."""
+    if df is None:
+        df = get_enriched_df()
     candidates = run_rules(df)
+
+    for rule_id, (expected, actual) in sorted(_priority_mismatches(candidates).items()):
+        print(f"  ⚠️  [Rule {rule_id}] priority mismatch: registry={expected}, emitted={actual}")
 
     if verbose:
         from collections import Counter
