@@ -5,6 +5,7 @@ Returns structured template objects consumed by the executor.
 """
 
 from __future__ import annotations
+import json
 import random
 from dataclasses import dataclass
 
@@ -255,6 +256,9 @@ Action: Enrol in 5-email nurture sequence
 
 # ── Template dispatcher ───────────────────────────────────────────────────────
 
+# Fallback upgrade target when the planner metadata doesn't specify one.
+NEXT_PLAN = {"Free": "Starter", "Starter": "Pro", "Pro": "Enterprise"}
+
 def build_template(action: dict, customer: dict, prediction: dict) -> MessageTemplate:
     """
     Route action_type to the correct template builder.
@@ -271,8 +275,18 @@ def build_template(action: dict, customer: dict, prediction: dict) -> MessageTem
     open_tickets   = int(customer.get("open_tickets", 0))
     sentiment      = float(customer.get("avg_sentiment", 0))
     tenure_days    = int(customer.get("tenure_days", 0))
-    suggested_plan = action.get("context_plan") or (
-        "Pro" if customer.get("plan") == "Starter" else "Starter"
+
+    # Planner metadata (JSON in the agent_actions row) carries the rule/LLM
+    # context — e.g. the suggested upgrade target decided upstream.
+    meta = action.get("metadata") or {}
+    if isinstance(meta, str):
+        try:
+            meta = json.loads(meta)
+        except (ValueError, TypeError):
+            meta = {}
+    context = meta.get("context") if isinstance(meta, dict) else None
+    suggested_plan = (context or {}).get("suggested_plan") or NEXT_PLAN.get(
+        customer.get("plan"), "Pro"
     )
 
     dispatch = {

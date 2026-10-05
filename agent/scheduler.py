@@ -11,11 +11,10 @@ import uuid
 import json
 from pathlib import Path
 from datetime import datetime, timedelta
-from dataclasses import asdict
 
 import sys
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from data.db import DB_PATH
+from data.db import connect
 from agent.planner import PlannedAction
 
 # Cooldown: don't re-queue the same action_type for the same customer
@@ -66,6 +65,15 @@ def _score_action(plan: PlannedAction, ltv: float) -> float:
     )
 
 
+def _json_default(obj):
+    """JSON encoder for planner metadata: numpy scalars and datetimes included."""
+    if hasattr(obj, "item"):          # numpy scalar → Python scalar
+        return obj.item()
+    if isinstance(obj, datetime):
+        return obj.isoformat()
+    return str(obj)
+
+
 def schedule(
     plans: list[PlannedAction],
     ltv_lookup: dict[str, float],
@@ -77,7 +85,7 @@ def schedule(
     3. Write to agent_actions table (status='pending')
     Returns the list of queued action dicts.
     """
-    conn    = sqlite3.connect(DB_PATH)
+    conn    = connect()
     blocked = _get_recent_actions(conn)
     now     = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
@@ -91,6 +99,8 @@ def schedule(
             continue
 
         ltv   = ltv_lookup.get(plan.customer_id, 0.0)
+        if ltv != ltv:                 # NaN guard
+            ltv = 0.0
         score = _score_action(plan, ltv)
 
         action = {
@@ -103,10 +113,10 @@ def schedule(
             "outcome":     None,
             "created_at":  now,
             "executed_at": None,
-            "_score":      score,           # internal, not stored
+            "_score":      score,
             "_ltv":        ltv,
             "_llm_enhanced": plan.llm_enhanced,
-            "_metadata":   json.dumps(plan.metadata),
+            "_metadata":   json.dumps(plan.metadata, default=_json_default),
         }
         queued.append(action)
 
@@ -118,11 +128,13 @@ def schedule(
     for a in queued:
         conn.execute(
             "INSERT INTO agent_actions "
-            "(action_id, customer_id, action_type, reason, priority, status, outcome, created_at, executed_at) "
-            "VALUES (?,?,?,?,?,?,?,?,?)",
+            "(action_id, customer_id, action_type, reason, priority, status, outcome, "
+            " created_at, executed_at, metadata, urgency_score) "
+            "VALUES (?,?,?,?,?,?,?,?,?,?,?)",
             (a["action_id"], a["customer_id"], a["action_type"],
              a["reason"], a["priority"], a["status"],
-             a["outcome"], a["created_at"], a["executed_at"])
+             a["outcome"], a["created_at"], a["executed_at"],
+             a["_metadata"], a["_score"])
         )
     conn.commit()
     conn.close()
@@ -139,7 +151,7 @@ def schedule(
         print(f"\n  Priority breakdown:")
         label_map = {5:"CRITICAL",4:"HIGH",3:"MEDIUM",2:"LOW",1:"INFO"}
         for p in sorted(p_counts.keys(), reverse=True):
-            print(f"    P{p} {label_map[p]:10s}: {p_counts[p]}")
+            print(f"    P{p} {label_map.get(p, str(p)):10s}: {p_counts[p]}")
         print(f"\n  Top 10 by urgency score:")
         for a in queued[:10]:
             llm_tag = "[LLM]" if a["_llm_enhanced"] else "     "
@@ -151,11 +163,11 @@ def schedule(
 
 
 def get_pending_queue(limit: int = 100) -> list[dict]:
-    """Fetch pending actions from DB, ordered by priority."""
-    conn = sqlite3.connect(DB_PATH)
+    """Fetch pending actions from DB, ordered by scheduler urgency score."""
+    conn = connect()
     rows = conn.execute(
         "SELECT * FROM agent_actions WHERE status='pending' "
-        "ORDER BY priority DESC, created_at ASC LIMIT ?",
+        "ORDER BY urgency_score DESC, priority DESC, created_at ASC LIMIT ?",
         (limit,)
     ).fetchall()
     cols = [d[0] for d in conn.execute("SELECT * FROM agent_actions LIMIT 0").description]

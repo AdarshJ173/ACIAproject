@@ -6,17 +6,14 @@ writes outcomes back to the DB as the feedback signal.
 """
 
 from __future__ import annotations
-import sqlite3
 import random
-import time
-import json
 from pathlib import Path
 from datetime import datetime
 from dataclasses import dataclass
 
 import sys
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from data.db import DB_PATH
+from data.db import connect
 from actions.templates import build_template, MessageTemplate
 random.seed()   # fresh seed per run for outcome simulation
 
@@ -143,7 +140,7 @@ class ExecutionResult:
 
 def _load_context(customer_ids: list[str]) -> tuple[dict, dict]:
     """Fetch customer features + ML predictions for a batch of customers."""
-    conn = sqlite3.connect(DB_PATH)
+    conn = connect()
     placeholders = ",".join("?" * len(customer_ids))
 
     cust_rows = conn.execute(
@@ -195,17 +192,17 @@ def execute_batch(
     Pull up to `limit` pending actions, execute them, write outcomes to DB.
     dry_run=True: build templates and simulate but don't write to DB.
     """
-    conn   = sqlite3.connect(DB_PATH)
+    conn   = connect()
     rows   = conn.execute(
         "SELECT * FROM agent_actions WHERE status='pending' "
-        "ORDER BY priority DESC, created_at ASC LIMIT ?",
+        "ORDER BY urgency_score DESC, priority DESC, created_at ASC LIMIT ?",
         (limit,)
     ).fetchall()
     cols   = [d[0] for d in conn.execute("SELECT * FROM agent_actions LIMIT 0").description]
     actions = [dict(zip(cols, r)) for r in rows]
-    conn.close()
 
     if not actions:
+        conn.close()
         if verbose:
             print("  No pending actions in queue.")
         return []
@@ -240,9 +237,8 @@ def execute_batch(
         )
         results.append(result)
 
-        # Write outcome to DB
+        # Write outcome to DB (one connection + one commit for the whole batch)
         if not dry_run:
-            conn = sqlite3.connect(DB_PATH)
             conn.execute(
                 "UPDATE agent_actions SET status='executed', outcome=?, executed_at=? "
                 "WHERE action_id=?",
@@ -259,8 +255,10 @@ def execute_batch(
                     (f"ACIA-{action['action_id'][:8]}", cid, action["action_type"],
                      template.subject, opened, clicked, now)
                 )
-            conn.commit()
-            conn.close()
+
+    if not dry_run:
+        conn.commit()
+    conn.close()
 
     return results
 
