@@ -3,10 +3,11 @@
 ## Setup (first time / after moving the project)
 
 ```bash
-cd /Users/yashaswinsharma/Desktop/ACIAproject
+cd /path/to/ACIAproject
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
+pip install -r requirements-dev.txt   # optional: test suite
 ```
 
 ## Activate the venv (every new terminal)
@@ -15,9 +16,7 @@ pip install -r requirements.txt
 source .venv/bin/activate
 ```
 
-> On this Mac use `python` **after** activating the venv, or always use `python3`.
-
----
+> Use `python` after activating the venv, or always use `python3`.
 
 ## Main commands
 
@@ -51,9 +50,16 @@ python main.py --cycle --llm --llm-budget 10
 python main.py --api
 # Swagger UI → http://localhost:8000/docs
 # ReDoc      → http://localhost:8000/redoc
+# Dashboard  → http://localhost:8000/ui
 
 # Custom host/port
 python main.py --api --host 127.0.0.1 --port 9000
+```
+
+## Tests
+
+```bash
+pytest -q
 ```
 
 ## Optional LLM env vars

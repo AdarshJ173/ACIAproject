@@ -61,13 +61,13 @@ acia/
 │
 ├── models/
 │   ├── churn.py          ← churn prediction (Random Forest)
-│   ├── conversion.py     ← conversion scoring (Logistic Regression)
+│   ├── conversion.py     ← conversion scoring (Gradient Boosting, no price leakage)
 │   ├── segmentation.py   ← RFM + KMeans clustering
 │   ├── orchestrator.py   ← trains all models + writes predictions to DB
 │   └── artifacts/        ← saved .pkl model files
 │
 ├── agent/
-│   ├── rules.py          ← 8 business rules across churn/conversion/loyalty
+│   ├── rules.py          ← 9 business rules across churn/conversion/loyalty
 │   ├── planner.py        ← LLM planner (OpenRouter free models) resolves conflicts
 │   ├── scheduler.py      ← priority queue + cooldown logic
 │   └── runner.py         ← orchestrates rules → planner → scheduler
@@ -77,8 +77,11 @@ acia/
 │   ├── executor.py       ← pulls queue, executes actions, logs outcomes
 │   └── feedback.py       ← applies outcome signals back to health scores
 │
-└── dashboard/
-    └── app.jsx           ← React dashboard (standalone, no build step needed)
+├── dashboard/
+│   ├── index.html        ← live dashboard, served at /ui (no build step)
+│   └── app.jsx           ← React + Recharts version (needs a bundler)
+│
+└── tests/                ← pytest suite (48 tests)
 ```
 
 ---
@@ -88,10 +91,13 @@ acia/
 ### 1. Clone and install
 
 ```bash
-git clone https://github.com/yourname/acia.git
-cd acia
+git clone https://github.com/AdarshJ173/ACIAproject.git
+cd ACIAproject
 python -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
+
+# optional — for the test suite
+pip install -r requirements-dev.txt
 ```
 
 ### 2. Set your OpenRouter API key (for LLM planning)
@@ -135,6 +141,14 @@ python main.py --cycle --llm --llm-budget 10
 ```bash
 python main.py --api
 # → http://localhost:8000/docs  (interactive Swagger UI)
+# → http://localhost:8000/ui    (live dashboard, reads the API itself)
+```
+
+### 6. Run the test suite
+
+```bash
+pytest -q          # 48 tests: rules, planner validation, scheduler,
+                   # feedback loop, executor, templates, REST API, migrations
 ```
 
 ---
@@ -144,6 +158,8 @@ python main.py --api
 | Method | Endpoint | Description |
 |--------|----------|-------------|
 | `GET` | `/` | Health check |
+| `GET` | `/health` | Deep health check (DB connectivity) |
+| `GET` | `/ui` | Live HTML dashboard |
 | `GET` | `/dashboard` | Full KPI summary |
 | `GET` | `/customers` | List customers with predictions (filterable) |
 | `GET` | `/customers/{id}/risk` | Risk profile for one customer |
@@ -152,6 +168,7 @@ python main.py --api
 | `GET` | `/predictions/conversion` | Ranked conversion predictions |
 | `GET` | `/predictions/segments` | Segment distribution + metrics |
 | `GET` | `/actions/queue` | Pending / executed action queue |
+| `GET` | `/actions/{id}` | Single action by ID |
 | `POST` | `/actions/execute` | Execute pending actions |
 | `POST` | `/agent/run` | Trigger a full agent decision cycle |
 | `POST` | `/agent/train` | Retrain models + re-run inference |
@@ -165,8 +182,8 @@ Full interactive docs at `http://localhost:8000/docs` when the API is running.
 
 | Model | Algorithm | Performance | Target |
 |-------|-----------|-------------|--------|
-| Churn predictor | Random Forest | AUC 0.9985 | `is_churned` label |
-| Conversion scorer | Logistic Regression | AUC 1.000 | Plan rank ≥ Pro |
+| Churn predictor | Random Forest | AUC 0.999 | `is_churned` label |
+| Conversion scorer | Gradient Boosting | AUC 0.75 | Plan rank ≥ Pro |
 | Segment classifier | KMeans (k=5) | Silhouette 0.23 | RFM cluster |
 
 **Features used (28 total):**
@@ -176,6 +193,11 @@ Full interactive docs at `http://localhost:8000/docs` when the API is running.
 - Support: ticket count, open/critical tickets, sentiment, cancellation signals
 - Email: open rate, click rate
 - Derived: engagement index, risk index, recency score
+
+> The conversion scorer trains on 24 of these — plan rank, MRR, total spend and
+> AOV are excluded because they *are* the label (plan determines price). Keeping
+> them made the model memorise the target (AUC 1.000) while scoring every real
+> prospect ≈ 0, which silently disabled all CNV rules.
 
 ---
 
@@ -203,7 +225,9 @@ ACIA uses SQLite by default. To connect real CRM data:
 
 1. **Replace the SQLite tables** — keep the same schema in `data/generate.py` but populate from your source (Salesforce, HubSpot, CSV exports).
 
-2. **Swap the DB connection** — change `DB_PATH` in `data/features.py` and `api.py`, or replace `sqlite3` with `psycopg2`/`sqlalchemy` for PostgreSQL.
+2. **Swap the DB connection** — change `DB_PATH` in `data/db.py` (single shared
+   path for every module), or replace the `sqlite3` calls in `data/db.py` with
+   `psycopg2`/`sqlalchemy` for PostgreSQL.
 
 3. **Retrain the models** — call `POST /agent/train` or run `python main.py --setup` after loading real data.
 
@@ -243,18 +267,21 @@ ACIA uses SQLite by default. To connect real CRM data:
 | ML | scikit-learn, NumPy, pandas |
 | LLM | OpenRouter (`openrouter/free` by default) |
 | API | FastAPI + uvicorn |
-| Dashboard | React + Recharts (embedded, no build step) |
+| Dashboard | HTML/JS dashboard served at `/ui` (no build) + React/Recharts variant |
 
 ---
 
 ## Outcomes from one full pipeline run
 
 - **500 customers scored** across churn, conversion, and segment
-- **281 action candidates** generated by the rule engine
-- **243 actions queued** after deduplication and cooldown filtering
-- **45% success rate** across executed actions
+- **372 action candidates** generated by the rule engine (all 9 rules firing)
+- **276 actions queued** after deduplication and cooldown filtering
+- **48% success rate** across executed actions
 - **$1.83M LTV** estimated across the customer base
 - **76 high-risk customers** (churn score > 60%) flagged for urgent intervention
+
+*(Numbers from a run on the bundled synthetic dataset — dates and outcomes
+vary slightly per regeneration.)*
 
 ---
 
