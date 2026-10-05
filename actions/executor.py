@@ -252,7 +252,9 @@ def execute_batch(
                 conn.execute(
                     "INSERT INTO email_log (email_id, customer_id, email_type, subject, opened, clicked, sent_at) "
                     "VALUES (?,?,?,?,?,?,?)",
-                    (f"ACIA-{action['action_id'][:8]}", cid, action["action_type"],
+                    # full action id: a short prefix can collide, and a PK error
+                    # here would abort the batch before its single commit
+                    (f"ACIA-{action['action_id']}", cid, action["action_type"],
                      template.subject, opened, clicked, now)
                 )
 
