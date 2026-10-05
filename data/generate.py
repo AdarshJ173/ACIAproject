@@ -3,12 +3,11 @@ ACIA — Synthetic CRM Data Generator
 Generates realistic customer data for all downstream ML + agent layers.
 """
 
-import sqlite3
 import random
 import json
 from datetime import datetime, timedelta
 
-from data.db import DB_PATH
+from data.db import DB_PATH, connect
 
 random.seed(42)
 
@@ -112,6 +111,9 @@ CREATE TABLE IF NOT EXISTS agent_actions (
     outcome         TEXT,
     created_at      TEXT,
     executed_at     TEXT,
+    metadata        TEXT,           -- planner context / LLM notes (JSON)
+    urgency_score   REAL,           -- scheduler composite score (queue ordering)
+    feedback_applied_at TEXT,       -- set once outcome folded into health score
     FOREIGN KEY(customer_id) REFERENCES customers(customer_id)
 );
 
@@ -264,9 +266,17 @@ def build_database():
     print("🏗  Building ACIA database...")
     DB_PATH.parent.mkdir(parents=True, exist_ok=True)
 
-    conn = sqlite3.connect(DB_PATH)
+    conn = connect()
     cur  = conn.cursor()
     cur.executescript(SCHEMA)
+
+    # Full rebuild: clear every table so regenerated data never coexists with
+    # stale rows (leftovers from an earlier/larger run, old action history that
+    # would suppress the new run through cooldowns, orphaned predictions…).
+    # Children before parents — foreign keys are enforced.
+    for table in ("agent_actions", "ml_predictions", "email_log", "support_tickets",
+                  "engagement_events", "transactions", "customers"):
+        cur.execute(f"DELETE FROM {table}")
 
     print(f"  Generating {NUM_CUSTOMERS} customers...")
     customers = gen_customers(NUM_CUSTOMERS)

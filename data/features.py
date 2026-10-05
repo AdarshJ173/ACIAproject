@@ -3,16 +3,11 @@ ACIA — Feature Engineering
 Pulls raw CRM data from SQLite and builds feature vectors for ML models.
 """
 
-import sqlite3
 import pandas as pd
 import numpy as np
 from datetime import datetime
 
-from data.db import DB_PATH
-
-
-def get_connection() -> sqlite3.Connection:
-    return sqlite3.connect(DB_PATH)
+from data.db import connect as get_connection
 
 
 def build_customer_features() -> pd.DataFrame:
